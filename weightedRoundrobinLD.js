@@ -3,25 +3,23 @@ const http = require("http");
 const servers = [
     {
         url: "http://localhost:5001",
+        weight: 1,
         healthy: true
     },
     {
         url: "http://localhost:5002",
+        weight: 3,
         healthy: true
     },
     {
         url: "http://localhost:5003",
+        weight: 2,
         healthy: true
     }
 ];
 
 let currentServer = 0;
-
-/*
-|--------------------------------------------------------------------------
-| Health Check
-|--------------------------------------------------------------------------
-*/
+let currentWeight = 0;
 
 function checkHealth(server) {
 
@@ -30,12 +28,14 @@ function checkHealth(server) {
         (res) => {
 
             const wasHealthy = server.healthy;
+
             if (res.statusCode === 200) {
                 server.healthy = true;
             } else {
                 server.healthy = false;
             }
 
+            // Consume response body
             res.resume();
 
             if (!wasHealthy && server.healthy) {
@@ -48,22 +48,23 @@ function checkHealth(server) {
         }
     );
 
+    // Server didn't respond within 2 seconds
     healthCheck.setTimeout(2000, () => {
+
         healthCheck.destroy();
+
         markUnhealthy(server);
     });
 
+    // Connection error
     healthCheck.on("error", () => {
         markUnhealthy(server);
     });
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| Mark Server Unhealthy
-|--------------------------------------------------------------------------
-*/
+// -------------------------
+// MARK SERVER UNHEALTHY
+// -------------------------
 
 function markUnhealthy(server) {
 
@@ -74,69 +75,64 @@ function markUnhealthy(server) {
     server.healthy = false;
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| Get Next Healthy Server
-|--------------------------------------------------------------------------
-*/
+// -------------------------
+// WEIGHTED ROUND ROBIN
+// -------------------------
 
 function getNextServer() {
 
-    for (let i = 0; i < servers.length; i++) {
+    while (true) {
 
         const server = servers[currentServer];
 
-        currentServer =
-            (currentServer + 1) % servers.length;
+        // If server is unhealthy,
+        // skip it
+        if (!server.healthy) {
 
-        if (server.healthy) {
+            currentServer =
+                (currentServer + 1) % servers.length;
+
+            currentWeight = 0;
+
+            continue;
+        }
+
+        // Give this server requests
+        // according to its weight
+        if (currentWeight < server.weight) {
+
+            currentWeight++;
+
             return server;
         }
-    }
 
-    return null;
+        // Weight exhausted
+        currentWeight = 0;
+
+        currentServer =
+            (currentServer + 1) % servers.length;
+    }
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| Load Balancer
-|--------------------------------------------------------------------------
-*/
+// -------------------------
+// LOAD BALANCER
+// -------------------------
 
 const loadBalancer = http.createServer((req, res) => {
 
     const server = getNextServer();
 
-    /*
-    |--------------------------------------------------------------------------
-    | No Healthy Servers
-    |--------------------------------------------------------------------------
-    */
-
     if (!server) {
 
-        console.log("❌ No healthy servers available");
-
         res.statusCode = 503;
-
         res.end("Service Unavailable");
 
         return;
     }
 
-
-    /*
-    |--------------------------------------------------------------------------
-    | Forward Request
-    |--------------------------------------------------------------------------
-    */
-
     console.log(
         `➡️ ${req.method} ${req.url} → ${server.url}`
     );
-
 
     const proxyReq = http.request(
         server.url + req.url,
@@ -145,12 +141,6 @@ const loadBalancer = http.createServer((req, res) => {
             headers: req.headers
         },
         (proxyRes) => {
-
-            /*
-            |--------------------------------------------------------------------------
-            | Send Backend Response To Client
-            |--------------------------------------------------------------------------
-            */
 
             res.writeHead(
                 proxyRes.statusCode,
@@ -161,13 +151,7 @@ const loadBalancer = http.createServer((req, res) => {
         }
     );
 
-
-    /*
-    |--------------------------------------------------------------------------
-    | Backend Server Error
-    |--------------------------------------------------------------------------
-    */
-
+    // Backend request failed
     proxyReq.on("error", (error) => {
 
         console.error(
@@ -186,22 +170,10 @@ const loadBalancer = http.createServer((req, res) => {
         }
     });
 
-
-    /*
-    |--------------------------------------------------------------------------
-    | Forward Client Request Body
-    |--------------------------------------------------------------------------
-    */
-
+    // Send client request body
     req.pipe(proxyReq);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| Start Load Balancer
-|--------------------------------------------------------------------------
-*/
 
 loadBalancer.listen(5000, () => {
 
@@ -210,16 +182,14 @@ loadBalancer.listen(5000, () => {
     );
 
     console.log(
-        "🔄 Using Round-Robin load balancing"
+        "⚖️ Weighted Round Robin enabled"
     );
 });
 
 
-/*
-|--------------------------------------------------------------------------
-| Health Check Every 5 Seconds
-|--------------------------------------------------------------------------
-*/
+// -------------------------
+// RUN HEALTH CHECK EVERY 5 SEC
+// -------------------------
 
 setInterval(() => {
 
