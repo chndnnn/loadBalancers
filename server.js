@@ -5,10 +5,17 @@ const app = express();
 const PORT = process.env.PORT ;
 
 app.get("/", (req, res) => {
-    res.json({
-        message: "Hello from server",
-        port: PORT
-    });
+     
+    console.log(`Request received by ${PORT}`);
+
+    setTimeout(() => {
+
+        res.json({
+            message: "Hello from server",
+            port: PORT
+        });
+
+    }, 10000);
 });
 
 app.get("/health", (req, res) => {
